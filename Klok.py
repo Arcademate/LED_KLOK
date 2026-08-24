@@ -54,6 +54,7 @@ MS_PER_MINUUT = 60_000
 SEC_PER_UUR = 3_600
 MIN_PER_12UUR = 720            # minuten in een volledige rondgang van de urenwijzer (12 * 60)
 MS_PER_12UUR = MIN_PER_12UUR * MS_PER_MINUUT
+MS_PER_RONDJE = 2_000           # duur van 1 volledige rondgang van het "rondje"-effect
 
 MIN_FRAME_DUUR = 0.033         # minimale tijd (s) tussen frames -> cap van ~30 fps
 
@@ -91,6 +92,7 @@ effecten = {
     "minuutDim": False,
     "uurGlow": False,
     "uurDim": False,
+    "rondje": False,
 }
 
 # Status van het "ademende" glow-effect (algehele helderheid golft op en neer)
@@ -187,6 +189,8 @@ def on_message(client, userdata, msg):
                 effecten["uurGlow"] = is_effect_aan(msg)
             elif msg.topic == "Keuken/Klok/Control/Effecten/uren/dim":
                 effecten["uurDim"] = is_effect_aan(msg)
+            elif msg.topic == "Keuken/Klok/Control/Effecten/rondje":
+                effecten["rondje"] = is_effect_aan(msg)
 
 
 def on_publish(client, userdata, mid, reason_code, properties):
@@ -388,6 +392,17 @@ def werkGlowEffectBij():
     ledStrip.brightness = min(1.0, glowStatus["basisHelderheid"] + glowStatus["waarde"])
 
 
+def rondjeEffect(timestamp):
+    """Render het "rondje"-effect: een felle helderheidsboost van een paar
+    leds die één keer per MS_PER_RONDJE (2 sec) helemaal rond de wijzerplaat
+    draait. Werkt als overlay op de bestaande kleuren (net als de glow/dim-
+    rand van de uren-/minutenwijzer, en hergebruikt daarom dezelfde
+    renderWijzerRandeffect())."""
+    msInHuidigRondje = timestamp % MS_PER_RONDJE
+    rondjeLed = int(AANTAL_LEDS / MS_PER_RONDJE * msInHuidigRondje)
+    renderWijzerRandeffect(rondjeLed, msInHuidigRondje, MS_PER_RONDJE, (0, 80), (8, 1), lambda x: max(1, x))
+
+
 # --------------------------------------------------------------------------
 # Frame rendering
 # --------------------------------------------------------------------------
@@ -417,6 +432,9 @@ def renderFrame():
         )
 
     # niet vullend
+    if effecten["rondje"]:
+        rondjeEffect(timestamp)
+
     if effecten["glow"]:
         werkGlowEffectBij()
 

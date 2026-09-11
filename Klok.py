@@ -54,9 +54,17 @@ MS_PER_MINUUT = 60_000
 SEC_PER_UUR = 3_600
 MIN_PER_12UUR = 720            # minuten in een volledige rondgang van de urenwijzer (12 * 60)
 MS_PER_12UUR = MIN_PER_12UUR * MS_PER_MINUUT
-MS_PER_KOMEETRONDE = 2_000      # duur van 1 volledige rondgang van het komeet-effect
 
 MIN_FRAME_DUUR = 0.033         # minimale tijd (s) tussen frames -> cap van ~30 fps
+
+# Het komeet-effect houdt zijn positie bij als eenvoudige led-index (hoeveel
+# leds de komeetkop deze rondgang al opgeschoven is) i.p.v. een opgeslagen
+# starttijdstip: geen deling/modulo op de wandklok nodig in de hot path van
+# renderFrame(), alleen een simpele optelling per frame. KOMEET_STAP wordt
+# hier 1x uitgerekend (i.p.v. elk frame) zodat 1 rondgang bij de frame-cap
+# van MIN_FRAME_DUUR ongeveer MS_PER_KOMEETRONDE (2 sec) duurt.
+MS_PER_KOMEETRONDE = 2_000
+KOMEET_STAP = AANTAL_LEDS * MIN_FRAME_DUUR * 1000 / MS_PER_KOMEETRONDE
 
 PIXEL_VOLGORDE = neopixel.GRB
 
@@ -100,6 +108,13 @@ glowStatus = {
     "waarde": 0.0,           # huidige opgetelde helderheid t.o.v. basisHelderheid
     "omhoog": False,         # richting van de golfbeweging
     "basisHelderheid": 0.0,  # helderheid zoals ingesteld via Config/brightness
+}
+
+# Status van het komeet-effect: hoeveel leds de komeetkop deze rondgang al
+# opgeschoven is (0 bij start). Net als glow is dit een eenmalig effect dat
+# zichzelf na 1 volledige rondgang weer uitzet, zie komeetEffect().
+komeetStatus = {
+    "positie": 0.0,
 }
 
 laatsteFrameTijd = time.time()
@@ -190,7 +205,11 @@ def on_message(client, userdata, msg):
             elif msg.topic == "Keuken/Klok/Control/Effecten/uren/dim":
                 effecten["uurDim"] = is_effect_aan(msg)
             elif msg.topic == "Keuken/Klok/Control/Effecten/komeet":
-                effecten["komeet"] = is_effect_aan(msg)
+                # Eenmalige trigger (zoals glow, geen true/false payload):
+                # start altijd een nieuwe rondgang vanaf led 0, ook als er
+                # nog een rondgang bezig was.
+                effecten["komeet"] = True
+                komeetStatus["positie"] = 0.0
 
 
 def on_publish(client, userdata, mid, reason_code, properties):
@@ -392,15 +411,30 @@ def werkGlowEffectBij():
     ledStrip.brightness = min(1.0, glowStatus["basisHelderheid"] + glowStatus["waarde"])
 
 
-def komeetEffect(timestamp):
+def komeetEffect():
     """Render het komeet-effect: een felle helderheidsboost van een paar
-    leds ("komeetkop") die één keer per MS_PER_KOMEETRONDE (2 sec) helemaal
-    rond de wijzerplaat raast. Werkt als overlay op de bestaande kleuren
-    (net als de glow/dim-rand van de uren-/minutenwijzer, en hergebruikt
-    daarom dezelfde renderWijzerRandeffect())."""
-    msInHuidigeKomeetronde = timestamp % MS_PER_KOMEETRONDE
-    komeetLed = int(AANTAL_LEDS / MS_PER_KOMEETRONDE * msInHuidigeKomeetronde)
-    renderWijzerRandeffect(komeetLed, msInHuidigeKomeetronde, MS_PER_KOMEETRONDE, (0, 80), (8, 1), lambda x: max(1, x))
+    leds ("komeetkop") die 1 rondgang over de wijzerplaat opschuift en
+    daarna zichzelf uitzet (eenmalig, net als glow).
+
+    Houdt de voortgang bij als led-positie (komeetStatus["positie"]) i.p.v.
+    een opgeslagen starttijdstip: renderFrame() hoeft dan geen deling/modulo
+    op de wandklok te doen, alleen KOMEET_STAP optellen. Dat betekent wel
+    dat de rondgang in frames i.p.v. wandklok-seconden voortschrijdt (bij
+    een tragere Pi duurt 1 rondgang dus iets langer dan de beoogde
+    MS_PER_KOMEETRONDE) en dat er maar 1 rondgang tegelijk kan lopen — voor
+    dit effect is dat prima.
+
+    Werkt als overlay op de bestaande kleuren en hergebruikt
+    renderWijzerRandeffect() (dezelfde die de glow/dim-rand van de
+    uren-/minutenwijzer rendert) door "1 ronde" in led-eenheden i.p.v. ms
+    door te geven, zodat de afstandsberekening daarin direct in leds is."""
+    komeetLed = int(komeetStatus["positie"])
+    renderWijzerRandeffect(komeetLed, komeetLed, AANTAL_LEDS, (0, 6), (8, 1), lambda x: max(1, x))
+
+    komeetStatus["positie"] += KOMEET_STAP
+    if komeetStatus["positie"] >= AANTAL_LEDS:
+        effecten["komeet"] = False
+        komeetStatus["positie"] = 0.0
 
 
 # --------------------------------------------------------------------------
@@ -433,7 +467,7 @@ def renderFrame():
 
     # niet vullend
     if effecten["komeet"]:
-        komeetEffect(timestamp)
+        komeetEffect()
 
     if effecten["glow"]:
         werkGlowEffectBij()

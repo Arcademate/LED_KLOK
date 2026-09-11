@@ -102,6 +102,13 @@ glowStatus = {
     "basisHelderheid": 0.0,  # helderheid zoals ingesteld via Config/brightness
 }
 
+# Status van het komeet-effect: op welk tijdstip de huidige rondgang begon
+# (None = er loopt geen rondgang). Net als glow is dit een eenmalig effect
+# dat zichzelf na 1 rondgang weer uitzet, zie komeetEffect().
+komeetStatus = {
+    "startTijdstip": None,
+}
+
 laatsteFrameTijd = time.time()
 
 
@@ -190,7 +197,11 @@ def on_message(client, userdata, msg):
             elif msg.topic == "Keuken/Klok/Control/Effecten/uren/dim":
                 effecten["uurDim"] = is_effect_aan(msg)
             elif msg.topic == "Keuken/Klok/Control/Effecten/komeet":
-                effecten["komeet"] = is_effect_aan(msg)
+                # Eenmalige trigger (zoals glow, geen true/false payload):
+                # start altijd een nieuwe rondgang vanaf led 0, ook als er
+                # nog een rondgang bezig was.
+                effecten["komeet"] = True
+                komeetStatus["startTijdstip"] = None
 
 
 def on_publish(client, userdata, mid, reason_code, properties):
@@ -394,13 +405,22 @@ def werkGlowEffectBij():
 
 def komeetEffect(timestamp):
     """Render het komeet-effect: een felle helderheidsboost van een paar
-    leds ("komeetkop") die één keer per MS_PER_KOMEETRONDE (2 sec) helemaal
-    rond de wijzerplaat raast. Werkt als overlay op de bestaande kleuren
-    (net als de glow/dim-rand van de uren-/minutenwijzer, en hergebruikt
-    daarom dezelfde renderWijzerRandeffect())."""
-    msInHuidigeKomeetronde = timestamp % MS_PER_KOMEETRONDE
-    komeetLed = int(AANTAL_LEDS / MS_PER_KOMEETRONDE * msInHuidigeKomeetronde)
-    renderWijzerRandeffect(komeetLed, msInHuidigeKomeetronde, MS_PER_KOMEETRONDE, (0, 80), (8, 1), lambda x: max(1, x))
+    leds ("komeetkop") die precies 1 keer in MS_PER_KOMEETRONDE (2 sec)
+    helemaal rond de wijzerplaat raast, en daarna zichzelf uitzet (eenmalig,
+    net als glow). Werkt als overlay op de bestaande kleuren (net als de
+    glow/dim-rand van de uren-/minutenwijzer, en hergebruikt daarom dezelfde
+    renderWijzerRandeffect())."""
+    if komeetStatus["startTijdstip"] is None:
+        komeetStatus["startTijdstip"] = timestamp
+
+    msSindsStart = timestamp - komeetStatus["startTijdstip"]
+    if msSindsStart >= MS_PER_KOMEETRONDE:
+        effecten["komeet"] = False
+        komeetStatus["startTijdstip"] = None
+        return
+
+    komeetLed = int(AANTAL_LEDS / MS_PER_KOMEETRONDE * msSindsStart)
+    renderWijzerRandeffect(komeetLed, msSindsStart, MS_PER_KOMEETRONDE, (0, 80), (8, 1), lambda x: max(1, x))
 
 
 # --------------------------------------------------------------------------
